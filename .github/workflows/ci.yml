@@ -1,6 +1,7 @@
 name: continuous integration
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -16,7 +17,7 @@ jobs:
         matrix:
           os:
             # lean-action does not provide lake executable on Windows for some reason
-            # - windows-latest
+            - windows-latest
             - ubuntu-latest
             - macos-latest
       runs-on: ${{ matrix.os }}
