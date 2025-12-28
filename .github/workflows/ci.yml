@@ -23,6 +23,11 @@ jobs:
       runs-on: ${{ matrix.os }}
       steps:
         - uses: actions/checkout@v4
+        - name: Check cc in bash
+          shell: bash
+          run: |
+            which cc
+            cc --version
         - name: Build Regex
           uses: leanprover/lean-action@v1
           with:
