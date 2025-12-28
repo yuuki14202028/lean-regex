@@ -1,4 +1,5 @@
 import Lean
+import UnicodeBasic.Types
 
 def Char.MAX_UNICODE : Nat := 0x10FFFF
 

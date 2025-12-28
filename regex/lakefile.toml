@@ -20,3 +20,8 @@ buildType = "relWithDebInfo"
 [[lean_exe]]
 name = "CorpusTest"
 srcDir = "tests"
+
+[[require]]
+name = "UnicodeBasic"
+git = "https://github.com/fgdorais/lean4-unicode-basic.git"
+rev = "main" # or any specific revision
