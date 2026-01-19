@@ -33,17 +33,59 @@ private def test (input : String) (expected : Ast) : Bool :=
 #guard test "$" (.anchor .eos)
 #guard test "^abc$" (.concat (.concat (.concat (.concat (.anchor .start) (.char 'a')) (.char 'b')) (.char 'c')) (.anchor .eos))
 
-#guard test "[abc]" (.classes ⟨false, #[.single 'a', .single 'b', .single 'c']⟩)
-#guard test "[^abc]" (.classes ⟨true, #[.single 'a', .single 'b', .single 'c']⟩)
-#guard test "[a-z]" (.classes ⟨false, #[.range 'a' 'z']⟩)
-#guard test r"[\da]" (.classes ⟨false, #[.perl ⟨false, .digit⟩, .single 'a']⟩)
-#guard test "[-]" (.classes ⟨false, #[.single '-']⟩)
-#guard test "[a-]" (.classes ⟨false, #[.single 'a', .single '-']⟩)
+#guard test "[abc]" (.classes (.union (.union (.atom (.single 'a')) (.atom (.single 'b'))) (.atom (.single 'c'))))
+#guard test "[^abc]" (.classes (.complement (.union (.union (.atom (.single 'a')) (.atom (.single 'b'))) (.atom (.single 'c')))))
+#guard test "[a-z]" (.classes (.atom (.range 'a' 'z')))
+#guard test r"[\da]" (.classes (.union (.atom (.perl ⟨false, .digit⟩)) (.atom (.single 'a'))))
+#guard test "[-]" (.classes (.atom (.single '-')))
+#guard test "[a-]" (.classes (.union (.atom (.single 'a')) (.atom (.single '-'))))
 -- special characters are allowed in classes
-#guard test r"[(){}*+?|^$.\--]" (.classes ⟨false, #[
-  '(', ')', '{', '}', '*', '+', '?', '|', '^', '$', '.', '-', '-'
-].map .single⟩)
-
+#guard test r"[(){}*+?|^$.\--]" (
+  .classes ("){}*+?|^$.--".foldl (fun acc c => .union acc (.atom (.single c))) (.atom (.single '(')))
+)
+#guard test "[[a]--[b]]" (.classes (.difference (.atom (.single 'a')) (.atom (.single 'b'))))
+#guard test "[[a]&&[b]]" (.classes (.intersection (.atom (.single 'a')) (.atom (.single 'b'))))
+#guard test "[[a]||[b]]" (.classes (.union (.atom (.single 'a')) (.atom (.single 'b'))))
+#guard test "[[^a]--[b]]" (.classes (.difference (.complement (.atom (.single 'a'))) (.atom (.single 'b'))))
+#guard test "[[a]--[^b]]" (.classes (.difference (.atom (.single 'a')) (.complement (.atom (.single 'b')))))
+#guard test "[[^a]--[^b]]" (.classes (.difference (.complement (.atom (.single 'a'))) (.complement (.atom (.single 'b')))))
+#guard parseAst "[a--b]" = .error (.unexpectedChar 'b')
+#guard parseAst "[^a--b]" = .error (.unexpectedChar 'b')
+#guard parseAst "[a--^b]" = .error (.unexpectedChar '^')
+#guard parseAst "[a&&b]" = .error (.unexpectedChar 'b')
+#guard test "[[a-zA-Z]--[aeiouAEIOU]]" (.classes
+  (.difference
+    (.union
+      (.atom (.range 'a' 'z'))
+      (.atom (.range 'A' 'Z')))
+    ("eiouAEIOU".foldl (fun acc c => .union acc (.atom (.single c))) (.atom (.single 'a')))))
+#guard parseAst "[:.]" = .error .unsupportedCharacterClass
+#guard parseAst "[.:]" = .ok (.classes (.union (.atom (.single '.')) (.atom (.single ':'))))
+#guard test "[a-z&&[^aeiou]]" (.classes
+  (.intersection
+    (.atom (.range 'a' 'z'))
+    (.complement
+      ("eiou".foldl (fun acc c => .union acc (.atom (.single c))) (.atom (.single 'a'))))))
+#guard test "[[a]&&[b]||[c]--[d]~~[e]]" (.classes
+  (.symDiff
+    (.difference
+      (.union
+        (.intersection
+          (.atom (.single 'a'))
+          (.atom (.single 'b')))
+        (.atom (.single 'c')))
+      (.atom (.single 'd')))
+    (.atom (.single 'e'))))
+#guard test "[[a]&&[[b]||[c]]--[[d]~~[e]]]" (.classes
+  (.difference
+    (.intersection
+      (.atom (.single 'a'))
+      (.union
+        (.atom (.single 'b'))
+        (.atom (.single 'c'))))
+    (.symDiff
+      (.atom (.single 'd'))
+      (.atom (.single 'e')))))
 #guard test "|" (.alternate .epsilon .epsilon)
 #guard test "a|" (.alternate (.char 'a') .epsilon)
 #guard test "|a" (.alternate .epsilon (.char 'a'))
@@ -127,8 +169,6 @@ private def test (input : String) (expected : Ast) : Bool :=
 #guard parseAst "\\x" = .error .unexpectedEof
 #guard parseAst "\\u" = .error .unexpectedEof
 #guard parseAst "\\u12" = .error .unexpectedEof
-#guard parseAst "\\u{}" = .error (.unexpectedChar '{')
-#guard parseAst "\\u{xyz}" = .error (.unexpectedChar '{')
 #guard parseAst "[]" = .error (.unexpectedChar ']')
 #guard parseAst "[^]" = .error (.unexpectedChar ']')
 #guard parseAst "a{1" = .error .unexpectedEof
@@ -140,7 +180,61 @@ private def test (input : String) (expected : Ast) : Bool :=
 #guard parseAst "(?:a" = .error .unexpectedEof
 #guard parseAst "(?:" = .error .unexpectedEof
 
--- We do not support \u{...} yet.
-#guard parseAst "\\u{1234}" = .error (.unexpectedChar '{')
+-- Minimum
+#guard parseAst "\\u{0}" = .ok (.char '\x00')
+
+-- ASCII range
+#guard parseAst "\\u{7F}" = .ok (.char '\x7F')
+#guard parseAst "\\u{41}" = .ok (.char 'A')
+
+-- Latin-1 Supplement
+#guard parseAst "\\u{80}" = .ok (.char (Char.ofNat 0x80))
+#guard parseAst "\\u{FF}" = .ok (.char 'ÿ')
+
+-- BMP (Basic Multilingual Plane)
+#guard parseAst "\\u{1234}" = .ok (.char (Char.ofNat 0x1234))
+#guard parseAst "\\u{FFFF}" = .ok (.char (Char.ofNat 0xFFFF))
+
+-- Supplementary planes (emoji and beyond)
+#guard parseAst "\\u{10000}" = .ok (.char (Char.ofNat 0x10000))
+#guard parseAst "\\u{1F600}" = .ok (.char '😀')  -- GRINNING FACE
+#guard parseAst "\\u{1F4A9}" = .ok (.char '💩')  -- PILE OF POO
+#guard parseAst "\\u{1F47D}" = .ok (.char '👽')  -- EXTRATERRESTRIAL ALIEN
+
+-- Maximum valid code point
+#guard parseAst "\\u{10FFFF}" = .ok (.char (Char.ofNat 0x10FFFF))
+
+-- Lowercase hex digits
+#guard parseAst "\\u{1f600}" = .ok (.char '😀')
+#guard parseAst "\\u{abcd}" = .ok (.char (Char.ofNat 0xABCD))
+
+-- Variable length (1-6 digits)
+#guard parseAst "\\u{a}" = .ok (.char (Char.ofNat 0xA))
+#guard parseAst "\\u{AB}" = .ok (.char (Char.ofNat 0xAB))
+#guard parseAst "\\u{ABC}" = .ok (.char (Char.ofNat 0xABC))
+#guard parseAst "\\u{ABCD}" = .ok (.char (Char.ofNat 0xABCD))
+#guard parseAst "\\u{ABCDE}" = .ok (.char (Char.ofNat 0xABCDE))
+
+-- Empty braces
+#guard parseAst "\\u{}" = .error (.unexpectedChar '}')
+
+-- Too large (beyond Unicode)
+#guard parseAst "\\u{110000}" = .error (.invalidCodePoint 0x110000)
+#guard parseAst "\\u{FFFFFF}" = .error (.invalidCodePoint 0xFFFFFF)
+
+-- Too many digits (>6)
+#guard parseAst "\\u{1234567}" = .error (.tooManyHexDigits 7)
+
+-- Invalid hex characters
+#guard parseAst "\\u{GHIJ}" = .error (.unexpectedChar 'G')
+#guard parseAst "\\u{12.34}" = .error (.unexpectedChar '.')
+
+-- Missing closing brace
+#guard parseAst "\\u{1234" = .error (.unexpectedEof)
+
+-- Surrogate range (optional, depending on Lean's Char behavior)
+-- If Lean's Char.ofNat rejects surrogates, these should error:
+#guard parseAst "\\u{D800}" = .error (.invalidCodePoint 0xD800)
+#guard parseAst "\\u{DFFF}" = .error (.invalidCodePoint 0xDFFF)
 
 end Regex.Syntax.Parser.Test
